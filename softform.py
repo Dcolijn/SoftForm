@@ -28,6 +28,7 @@ from mathutils import Vector, noise as mnoise
 SF_PREFIX = "SF_Zone_"
 SF_META_KEY = "softform_zones"
 SF_ORIG_KEY = "softform_orig_positions"
+SF_OBJ_ID_KEY = "softform_object_id"
 ZONE_COLORS = [
     (0.9, 0.2, 0.2, 1.0),
     (0.2, 0.7, 0.9, 1.0),
@@ -85,55 +86,109 @@ def get_next_logical_zone_id(sf):
     return f"zone_{max_idx + 1}"
 
 
-def load_zone_object_map(zone):
-    """Read {object_name: vertex_group_name} mapping from zone property."""
-    raw = getattr(zone, "object_vgroups_json", "")
+def ensure_object_stable_id(obj):
+    """Attach/read a stable custom id on object so renames don't break target links."""
+    obj_id = obj.get(SF_OBJ_ID_KEY, "")
+    if obj_id:
+        return str(obj_id)
+    # as_pointer() is stable during the file session; good enough as generated seed.
+    obj_id = f"obj_{obj.as_pointer()}_{random.randint(1000, 9999)}"
+    obj[SF_OBJ_ID_KEY] = obj_id
+    return obj_id
+
+
+def load_zone_targets(zone):
+    """Read zone targets list from zone property."""
+    raw = getattr(zone, "zone_targets_json", "")
     if not raw:
-        return {}
+        return []
     try:
         data = json.loads(raw)
-        if isinstance(data, dict):
-            return {str(k): str(v) for k, v in data.items()}
+        if isinstance(data, list):
+            cleaned = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                cleaned.append({
+                    "object_id": str(item.get("object_id", "")),
+                    "object_name": str(item.get("object_name", "")),
+                    "vgroup_name": str(item.get("vgroup_name", "")),
+                })
+            return cleaned
     except Exception:
         pass
-    return {}
+    return []
 
 
-def save_zone_object_map(zone, object_map):
-    """Persist {object_name: vertex_group_name} mapping on the zone."""
-    zone.object_vgroups_json = json.dumps(object_map)
+def save_zone_targets(zone, targets):
+    """Persist zone targets [{object_id, object_name, vgroup_name}] on the zone."""
+    zone.zone_targets_json = json.dumps(targets)
+
+
+def build_zone_targets(objects_with_vg):
+    """Build target rows from tuples [(obj, vg_name), ...]."""
+    targets = []
+    for obj, vg_name in objects_with_vg:
+        targets.append({
+            "object_id": ensure_object_stable_id(obj),
+            "object_name": obj.name,
+            "vgroup_name": vg_name,
+        })
+    return targets
 
 
 def iter_zone_object_groups(context, zone):
-    """Yield tuples (obj, vg_name) for all objects linked to this logical zone."""
-    object_map = load_zone_object_map(zone)
-
-    # Backward compatibility for old scenes that only had one vgroup_name.
-    if not object_map and zone.vgroup_name:
-        for obj in context.scene.objects:
-            if obj.type != 'MESH':
-                continue
-            if obj.vertex_groups.get(zone.vgroup_name):
-                yield obj, zone.vgroup_name
+    """
+    Yield tuples (obj, vg_name) only for explicit zone targets.
+    Invalid targets are skipped with warnings instead of hard failures.
+    """
+    targets = load_zone_targets(zone)
+    if not targets:
+        print(f"[SoftForm] WARNING zone '{zone.zone_name}' heeft geen geldige targets.")
         return
 
-    for obj_name, vg_name in object_map.items():
-        obj = context.scene.objects.get(obj_name)
-        if obj is None or obj.type != 'MESH':
+    objects_by_id = {}
+    objects_by_name = {}
+    for obj in context.scene.objects:
+        if obj.type != 'MESH':
+            continue
+        obj_id = str(obj.get(SF_OBJ_ID_KEY, ""))
+        if obj_id:
+            objects_by_id[obj_id] = obj
+        objects_by_name[obj.name] = obj
+
+    for target in targets:
+        obj = None
+        obj_id = target.get("object_id", "")
+        obj_name = target.get("object_name", "")
+        vg_name = target.get("vgroup_name", "")
+
+        if obj_id:
+            obj = objects_by_id.get(obj_id)
+        if obj is None and obj_name:
+            obj = objects_by_name.get(obj_name)
+            if obj is not None and obj_id:
+                print(f"[SoftForm] WARNING object-id mismatch in zone '{zone.zone_name}', fallback by name: {obj_name}")
+
+        if obj is None:
+            print(f"[SoftForm] WARNING target object niet gevonden voor zone '{zone.zone_name}': id='{obj_id}', name='{obj_name}'")
+            continue
+        if not vg_name:
+            print(f"[SoftForm] WARNING target zonder vertex group in zone '{zone.zone_name}' op object '{obj.name}'")
             continue
         if obj.vertex_groups.get(vg_name) is None:
+            print(f"[SoftForm] WARNING vertex group '{vg_name}' niet gevonden op '{obj.name}' (zone '{zone.zone_name}')")
             continue
         yield obj, vg_name
 
 
-def create_zone_entry(sf, logical_zone_id, zone_name, color, object_map, fallback_vgroup=""):
-    """Create one logical zone entry in UI and store object->vertex-group mapping."""
+def create_zone_entry(sf, logical_zone_id, zone_name, color, targets):
+    """Create one logical zone entry in UI and store per-object target metadata."""
     zone = sf.zones.add()
     zone.zone_id = logical_zone_id
     zone.zone_name = zone_name
-    zone.vgroup_name = fallback_vgroup  # legacy compatibility only
     zone.color = color
-    save_zone_object_map(zone, object_map)
+    save_zone_targets(zone, targets)
     sf.active_zone_index = len(sf.zones) - 1
     return zone
 
@@ -635,10 +690,8 @@ class SoftFormOperation(bpy.types.PropertyGroup):
 class SoftFormZone(bpy.types.PropertyGroup):
     zone_id: bpy.props.StringProperty(name="Zone ID", default="")
     zone_name: bpy.props.StringProperty(name="Naam", default="Zone")
-    # Legacy fallback for older saved scenes; new code uses object_vgroups_json.
-    vgroup_name: bpy.props.StringProperty(name="Vertex Group")
-    # JSON mapping: {object_name: vertex_group_name}
-    object_vgroups_json: bpy.props.StringProperty(name="Object Groups", default="{}")
+    # JSON list: [{"object_id": "...", "object_name": "...", "vgroup_name": "..."}, ...]
+    zone_targets_json: bpy.props.StringProperty(name="Zone Targets", default="[]")
     color: bpy.props.FloatVectorProperty(name="Kleur", subtype='COLOR', size=4,
         min=0.0, max=1.0, default=(0.9, 0.2, 0.2, 1.0))
     # Master slider for all operations in this zone.
@@ -893,7 +946,7 @@ class SF_OT_CreateZoneNoInpaint(bpy.types.Operator):
     def _create_full_object_zone(self, context, sf, objects):
         """Create one logical zone over full-mesh selections on multiple objects."""
         logical_zone_id = get_next_logical_zone_id(sf)
-        object_map = {}
+        objects_with_vg = []
         color_index = len(sf.zones) + 1
 
         for obj in objects:
@@ -903,13 +956,13 @@ class SF_OT_CreateZoneNoInpaint(bpy.types.Operator):
             # Assign all vertices with weight 1.0 for this object.
             all_indices = [v.index for v in obj.data.vertices]
             vg.add(all_indices, 1.0, 'REPLACE')
-            object_map[obj.name] = vgname
+            objects_with_vg.append((obj, vgname))
 
         zone_name = f"{SF_PREFIX}{logical_zone_id}"
-        fallback_vg = next(iter(object_map.values()), "")
         color = get_zone_color(color_index)
-        create_zone_entry(sf, logical_zone_id, zone_name, color, object_map, fallback_vg)
-        print(f"[SoftForm] Created logical full-object zone: {zone_name} -> {object_map}")
+        targets = build_zone_targets(objects_with_vg)
+        create_zone_entry(sf, logical_zone_id, zone_name, color, targets)
+        print(f"[SoftForm] Created logical full-object zone: {zone_name} -> {targets}")
 
     def _create_face_select_zone(self, context, sf, selected_by_object):
         """Create one logical zone from selected faces across multiple edit-mode objects."""
@@ -917,7 +970,7 @@ class SF_OT_CreateZoneNoInpaint(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='OBJECT')
 
         logical_zone_id = get_next_logical_zone_id(sf)
-        object_map = {}
+        objects_with_vg = []
         color_index = len(sf.zones) + 1
 
         for obj, selected_verts in selected_by_object.items():
@@ -925,13 +978,13 @@ class SF_OT_CreateZoneNoInpaint(bpy.types.Operator):
             vgname = f"{SF_PREFIX}{idx}"
             vg = obj.vertex_groups.new(name=vgname)
             vg.add(selected_verts, 1.0, 'REPLACE')
-            object_map[obj.name] = vgname
+            objects_with_vg.append((obj, vgname))
 
         zone_name = f"{SF_PREFIX}{logical_zone_id}"
-        fallback_vg = next(iter(object_map.values()), "")
         color = get_zone_color(color_index)
-        create_zone_entry(sf, logical_zone_id, zone_name, color, object_map, fallback_vg)
-        print(f"[SoftForm] Created logical face-select zone: {zone_name} -> {object_map}")
+        targets = build_zone_targets(objects_with_vg)
+        create_zone_entry(sf, logical_zone_id, zone_name, color, targets)
+        print(f"[SoftForm] Created logical face-select zone: {zone_name} -> {targets}")
 
 
 class SF_OT_CreateZoneWithInpaint(bpy.types.Operator):
@@ -961,14 +1014,13 @@ class SF_OT_CreateZoneWithInpaint(bpy.types.Operator):
         vg.add([v.index for v in obj.data.vertices], 0.0, 'REPLACE')
 
         logical_zone_id = get_next_logical_zone_id(sf)
-        object_map = {obj.name: vgname}
+        targets = build_zone_targets([(obj, vgname)])
         create_zone_entry(
             sf,
             logical_zone_id,
             f"{SF_PREFIX}{logical_zone_id}",
             get_zone_color(len(sf.zones) + 1),
-            object_map,
-            vgname,
+            targets,
         )
 
         # Enter weight paint mode
