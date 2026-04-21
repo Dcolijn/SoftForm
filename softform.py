@@ -810,6 +810,30 @@ class SF_OT_SetSelectionMode(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class SF_OT_SelectLinkedFaces(bpy.types.Operator):
+    """Select all connected faces from the current face selection (same as L)."""
+    bl_idname = "softform.select_linked_faces"
+    bl_label = "Selecteer verbonden faces (L)"
+    bl_description = "Selecteert verbonden faces, hetzelfde als sneltoets L in Edit Mode"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+
+        # Safety checks so the button gives a clear warning instead of a hard failure.
+        if obj is None or obj.type != 'MESH':
+            self.report({'WARNING'}, "Actief object moet een mesh zijn")
+            return {'CANCELLED'}
+        if obj.mode != 'EDIT':
+            self.report({'WARNING'}, "Zet het mesh-object eerst in Edit Mode")
+            return {'CANCELLED'}
+
+        # Ensure face select mode and then run Blender's linked-face selection.
+        bpy.ops.mesh.select_mode(type='FACE')
+        bpy.ops.mesh.select_linked(delimit=set())
+        return {'FINISHED'}
+
+
 class SF_OT_CreateZoneNoInpaint(bpy.types.Operator):
     """Create a zone from the current selection without weight painting."""
     bl_idname = "softform.create_zone_no_inpaint"
@@ -1377,6 +1401,9 @@ class SF_PT_MainPanel(bpy.types.Panel):
             col2.operator("softform.create_zone_with_inpaint", icon='BRUSH_DATA')
             col2.operator("softform.create_zone_no_inpaint", icon='MESH_DATA')
         else:
+            if sf.selection_mode in {'FACE_LINKED', 'FACE_LASSO'}:
+                # UI shortcut for users who do not know the keyboard shortcut (L).
+                col2.operator("softform.select_linked_faces", icon='SELECT_EXTEND')
             col2.operator("softform.create_zone_no_inpaint", icon='MESH_DATA')
             no_inpaint_row = col2.row()
             no_inpaint_row.enabled = False
@@ -1519,6 +1546,7 @@ CLASSES = [
     SoftFormPreset,
     SoftFormSceneProps,
     SF_OT_SetSelectionMode,
+    SF_OT_SelectLinkedFaces,
     SF_OT_CreateZoneNoInpaint,
     SF_OT_CreateZoneWithInpaint,
     SF_OT_FinishPainting,
