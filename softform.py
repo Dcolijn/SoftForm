@@ -565,67 +565,68 @@ class SoftFormOperation(bpy.types.PropertyGroup):
             ('SMOOTH', 'Smooth/Glad', 'Afvlakken'),
             ('NOISE', 'Noise Displace', 'Willekeurige verplaatsing'),
         ],
-        default='INFLATE'
+        default='INFLATE',
+        update=lambda self, ctx: on_softform_param_changed(self, ctx)
     )
-    enabled: bpy.props.BoolProperty(name="Aan", default=True)
-    weight: bpy.props.FloatProperty(name="Subtiel ↔ Extreem", min=0.0, max=1.0, default=0.5)
+    enabled: bpy.props.BoolProperty(name="Aan", default=True, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    weight: bpy.props.FloatProperty(name="Subtiel ↔ Extreem", min=0.0, max=1.0, default=0.5, update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- INFLATE ---
     inflate_direction: bpy.props.FloatProperty(name="Richting", min=-1.0, max=1.0, default=1.0,
-        description="Positief = inflate, negatief = flatten")
-    inflate_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.0, max=1.0, default=0.05)
+        description="Positief = inflate, negatief = flatten", update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    inflate_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.0, max=1.0, default=0.05, update=lambda self, ctx: on_softform_param_changed(self, ctx))
     inflate_falloff: bpy.props.EnumProperty(name="Falloff",
-        items=[('SHARP','Scherp',''),('SMOOTH','Zacht',''),('LINEAR','Lineair','')], default='SMOOTH')
+        items=[('SHARP','Scherp',''),('SMOOTH','Zacht',''),('LINEAR','Lineair','')], default='SMOOTH', update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- WAVES ---
-    waves_direction: bpy.props.FloatProperty(name="Richting (°)", min=0, max=360, default=0)
-    waves_amplitude: bpy.props.FloatProperty(name="Amplitude", min=0.001, max=0.1, default=0.02)
-    waves_wavelength: bpy.props.FloatProperty(name="Golflengte", min=0.01, max=1.0, default=0.2)
-    waves_phase: bpy.props.FloatProperty(name="Fase", min=0.0, max=1.0, default=0.0)
-    waves_randomness: bpy.props.FloatProperty(name="Willekeur", min=0.0, max=1.0, default=0.1)
+    waves_direction: bpy.props.FloatProperty(name="Richting (°)", min=0, max=360, default=0, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    waves_amplitude: bpy.props.FloatProperty(name="Amplitude", min=0.001, max=0.1, default=0.02, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    waves_wavelength: bpy.props.FloatProperty(name="Golflengte", min=0.01, max=1.0, default=0.2, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    waves_phase: bpy.props.FloatProperty(name="Fase", min=0.0, max=1.0, default=0.0, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    waves_randomness: bpy.props.FloatProperty(name="Willekeur", min=0.0, max=1.0, default=0.1, update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- FOLDS ---
-    folds_direction: bpy.props.FloatProperty(name="Richting (°)", min=0, max=360, default=0)
-    folds_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.001, max=0.15, default=0.03)
-    folds_length: bpy.props.FloatProperty(name="Lengte", min=0.01, max=0.5, default=0.1)
-    folds_frequency: bpy.props.IntProperty(name="Frequentie", min=1, max=20, default=5)
-    folds_randomness: bpy.props.FloatProperty(name="Willekeur", min=0.0, max=1.0, default=0.2)
+    folds_direction: bpy.props.FloatProperty(name="Richting (°)", min=0, max=360, default=0, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    folds_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.001, max=0.15, default=0.03, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    folds_length: bpy.props.FloatProperty(name="Lengte", min=0.01, max=0.5, default=0.1, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    folds_frequency: bpy.props.IntProperty(name="Frequentie", min=1, max=20, default=5, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    folds_randomness: bpy.props.FloatProperty(name="Willekeur", min=0.0, max=1.0, default=0.2, update=lambda self, ctx: on_softform_param_changed(self, ctx))
     folds_profile: bpy.props.EnumProperty(name="Profiel",
-        items=[('V','V-vouw',''),('U','U-vouw',''),('ASYM','Asymmetrisch','')], default='V')
+        items=[('V','V-vouw',''),('U','U-vouw',''),('ASYM','Asymmetrisch','')], default='V', update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- BUMPS ---
-    bumps_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.001, max=0.1, default=0.02)
-    bumps_frequency: bpy.props.FloatProperty(name="Frequentie", min=1, max=30, default=8)
-    bumps_randomness: bpy.props.FloatProperty(name="Willekeur", min=0.0, max=1.0, default=0.5)
+    bumps_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.001, max=0.1, default=0.02, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    bumps_frequency: bpy.props.FloatProperty(name="Frequentie", min=1, max=30, default=8, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    bumps_randomness: bpy.props.FloatProperty(name="Willekeur", min=0.0, max=1.0, default=0.5, update=lambda self, ctx: on_softform_param_changed(self, ctx))
     bumps_direction: bpy.props.EnumProperty(name="Richting",
-        items=[('NORMAL','Normaal',''),('TANGENT','Tangent','')], default='NORMAL')
+        items=[('NORMAL','Normaal',''),('TANGENT','Tangent','')], default='NORMAL', update=lambda self, ctx: on_softform_param_changed(self, ctx))
     bumps_form: bpy.props.EnumProperty(name="Vorm",
-        items=[('ROUND','Rond',''),('FLAT','Plat',''),('SHARP','Scherp','')], default='ROUND')
+        items=[('ROUND','Rond',''),('FLAT','Plat',''),('SHARP','Scherp','')], default='ROUND', update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- CREASE ---
-    crease_depth: bpy.props.FloatProperty(name="Diepte", min=0.001, max=0.05, default=0.01)
-    crease_width: bpy.props.FloatProperty(name="Breedte", min=0.001, max=0.05, default=0.02)
+    crease_depth: bpy.props.FloatProperty(name="Diepte", min=0.001, max=0.05, default=0.01, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    crease_width: bpy.props.FloatProperty(name="Breedte", min=0.001, max=0.05, default=0.02, update=lambda self, ctx: on_softform_param_changed(self, ctx))
     crease_sharpness: bpy.props.EnumProperty(name="Scherpte",
-        items=[('SHARP','Scherp',''),('SOFT','Zacht','')], default='SOFT')
+        items=[('SHARP','Scherp',''),('SOFT','Zacht','')], default='SOFT', update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- PUFF ---
-    puff_height: bpy.props.FloatProperty(name="Hoogte", min=0.001, max=0.2, default=0.05)
+    puff_height: bpy.props.FloatProperty(name="Hoogte", min=0.001, max=0.2, default=0.05, update=lambda self, ctx: on_softform_param_changed(self, ctx))
     puff_profile: bpy.props.EnumProperty(name="Profiel",
-        items=[('SPHERE','Bol',''),('FLAT','Plat',''),('OVAL','Ovaal','')], default='SPHERE')
+        items=[('SPHERE','Bol',''),('FLAT','Plat',''),('OVAL','Ovaal','')], default='SPHERE', update=lambda self, ctx: on_softform_param_changed(self, ctx))
     puff_asymmetry: bpy.props.EnumProperty(name="Asymmetrie",
-        items=[('NONE','Geen',''),('X','X-as',''),('Y','Y-as','')], default='NONE')
+        items=[('NONE','Geen',''),('X','X-as',''),('Y','Y-as','')], default='NONE', update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- SMOOTH ---
-    smooth_strength: bpy.props.FloatProperty(name="Sterkte", min=0.0, max=1.0, default=0.5)
-    smooth_iterations: bpy.props.IntProperty(name="Iteraties", min=1, max=20, default=3)
-    smooth_preserve_boundary: bpy.props.BoolProperty(name="Grens bewaren", default=True)
+    smooth_strength: bpy.props.FloatProperty(name="Sterkte", min=0.0, max=1.0, default=0.5, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    smooth_iterations: bpy.props.IntProperty(name="Iteraties", min=1, max=20, default=3, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    smooth_preserve_boundary: bpy.props.BoolProperty(name="Grens bewaren", default=True, update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # --- NOISE ---
-    noise_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.001, max=0.1, default=0.02)
-    noise_scale: bpy.props.FloatProperty(name="Schaal", min=0.1, max=10.0, default=2.0)
-    noise_detail: bpy.props.FloatProperty(name="Detail (octaven)", min=1, max=8, default=4)
-    noise_roughness: bpy.props.FloatProperty(name="Ruwheid", min=0.0, max=1.0, default=0.5)
-    noise_seed: bpy.props.IntProperty(name="Seed", default=0)
+    noise_intensity: bpy.props.FloatProperty(name="Intensiteit", min=0.001, max=0.1, default=0.02, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    noise_scale: bpy.props.FloatProperty(name="Schaal", min=0.1, max=10.0, default=2.0, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    noise_detail: bpy.props.FloatProperty(name="Detail (octaven)", min=1, max=8, default=4, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    noise_roughness: bpy.props.FloatProperty(name="Ruwheid", min=0.0, max=1.0, default=0.5, update=lambda self, ctx: on_softform_param_changed(self, ctx))
+    noise_seed: bpy.props.IntProperty(name="Seed", default=0, update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
 
 class SoftFormZone(bpy.types.PropertyGroup):
@@ -677,9 +678,11 @@ class SoftFormSceneProps(bpy.types.PropertyGroup):
 
     # Protect / UV options
     protect_edges: bpy.props.BoolProperty(name="Bescherm mesh-randen", default=True,
-        description="Voorkom gaten op naden: bevriest open/seam-randen")
+        description="Voorkom gaten op naden: bevriest open/seam-randen",
+        update=lambda self, ctx: on_softform_param_changed(self, ctx))
     preserve_uv: bpy.props.BoolProperty(name="Box UV schaal behouden", default=True,
-        description="UV's herprojecteren na bewerking zodat textuur niet mee rekt")
+        description="UV's herprojecteren na bewerking zodat textuur niet mee rekt",
+        update=lambda self, ctx: on_softform_param_changed(self, ctx))
 
     # Preset
     preset_name_input: bpy.props.StringProperty(name="Preset naam", default="")
@@ -697,6 +700,18 @@ def on_live_preview_toggle(self, context):
         for obj in context.scene.objects:
             if obj.type == 'MESH':
                 restore_original_positions(obj)
+
+
+def on_softform_param_changed(self, context):
+    """
+    Centrale update-callback voor parameters die de preview beïnvloeden.
+    Bij live preview direct opnieuw berekenen, zonder extra knop.
+    """
+    if context is None or context.scene is None or not hasattr(context.scene, "softform"):
+        return
+    sf = context.scene.softform
+    if sf.live_preview:
+        refresh_preview(context)
 
 
 # ---------------------------------------------------------------------------
@@ -1093,6 +1108,7 @@ class SF_OT_RefreshPreview(bpy.types.Operator):
     """Refresh live preview."""
     bl_idname = "softform.refresh_preview"
     bl_label = "Preview bijwerken"
+    bl_options = {'INTERNAL'}
 
     def execute(self, context):
         refresh_preview(context)
@@ -1346,8 +1362,6 @@ class SF_PT_MainPanel(bpy.types.Panel):
         row = header_box.row(align=True)
         icon = 'HIDE_OFF' if sf.live_preview else 'HIDE_ON'
         row.prop(sf, "live_preview", toggle=True, icon=icon, text="Live preview")
-        if sf.live_preview:
-            row.operator("softform.refresh_preview", text="", icon="FILE_REFRESH")
 
         # Progress indicator
         row2 = header_box.row(align=True)
@@ -1499,10 +1513,6 @@ class SF_PT_MainPanel(bpy.types.Panel):
                 row2 = op_box.row()
                 row2.prop(op, "weight", text="Subtiel ↔ Extreem", slider=True)
                 draw_op_params(op_box, op)
-
-            # Refresh preview when any prop changes
-            if sf.live_preview:
-                op_box.operator("softform.refresh_preview", text="Preview bijwerken", icon='FILE_REFRESH')
 
         box.separator()
         box.operator("softform.add_operation", icon='ADD')
