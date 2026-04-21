@@ -508,11 +508,14 @@ def apply_zone_operations(obj, zone_vgroup_name, zone_meta, protect_mesh, preser
     protect_set = get_protected_vert_indices(bm) if protect_mesh else set()
 
     operations = zone_meta.get("operations", [])
+    # Global intensity factor for this zone (1.0 keeps legacy behavior).
+    zone_master_weight = float(zone_meta.get("master_weight", 1.0))
     for op_data in operations:
         if not op_data.get("enabled", True):
             continue
         op_type = op_data.get("type", "")
-        weight_mul = op_data.get("weight", 0.5)
+        # Combine per-zone and per-operation slider into one final multiplier.
+        weight_mul = zone_master_weight * op_data.get("weight", 0.5)
 
         # Build a simple namespace for params
         class Params:
@@ -638,6 +641,14 @@ class SoftFormZone(bpy.types.PropertyGroup):
     object_vgroups_json: bpy.props.StringProperty(name="Object Groups", default="{}")
     color: bpy.props.FloatVectorProperty(name="Kleur", subtype='COLOR', size=4,
         min=0.0, max=1.0, default=(0.9, 0.2, 0.2, 1.0))
+    # Master slider for all operations in this zone.
+    master_weight: bpy.props.FloatProperty(
+        name="Algemene intensiteit",
+        min=0.0,
+        max=1.0,
+        default=1.0,
+        update=lambda self, ctx: on_softform_param_changed(self, ctx)
+    )
     operations: bpy.props.CollectionProperty(type=SoftFormOperation)
     active_op_index: bpy.props.IntProperty(default=0)
     show_ops: bpy.props.BoolProperty(name="Toon bewerkingen", default=True)
@@ -755,7 +766,10 @@ def zone_pg_to_dict(zone):
             "weight": op.weight,
             "params": params,
         })
-    return {"operations": ops}
+    return {
+        "master_weight": zone.master_weight,
+        "operations": ops,
+    }
 
 
 def op_pg_to_params_dict(op):
@@ -1144,6 +1158,7 @@ class SF_OT_ApplyConfirm(bpy.types.Operator):
                     obj_meta[zone.zone_id or zone.zone_name] = {
                         "zone_name": zone.zone_name,
                         "vgroup_name": vg_name,
+                        "master_weight": meta.get("master_weight", 1.0),
                         "operations": meta.get("operations", []),
                     }
                     save_zone_meta(obj, obj_meta)
@@ -1248,6 +1263,8 @@ class SF_OT_LoadPreset(bpy.types.Operator):
             self.report({'ERROR'}, "Ongeldige preset data")
             return {'CANCELLED'}
         zone = sf.zones[sf.active_zone_index]
+        # Preset can now control one global intensity slider for the whole zone.
+        zone.master_weight = meta.get("master_weight", 1.0)
         zone.operations.clear()
         for op_data in meta.get("operations", []):
             op = zone.operations.add()
@@ -1489,6 +1506,8 @@ class SF_PT_MainPanel(bpy.types.Panel):
                               depress=(sf.active_zone_index == i))
             op.index = i
 
+        box.separator()
+        box.prop(zone, "master_weight", slider=True)
         box.separator()
 
         # Operations
