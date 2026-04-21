@@ -842,7 +842,11 @@ class SF_OT_CreateZoneWithInpaint(bpy.types.Operator):
         brush = context.tool_settings.weight_paint.brush
         if brush:
             brush.weight = sf.brush_strength
-            brush.unprojected_radius = sf.brush_radius
+            # Blender renamed this API in newer versions (unprojected_radius -> unprojected_size).
+            if hasattr(brush, "unprojected_size"):
+                brush.unprojected_size = sf.brush_radius
+            elif hasattr(brush, "unprojected_radius"):
+                brush.unprojected_radius = sf.brush_radius
 
         sf.wizard_step = 2
         print(f"[SoftForm] Created inpaint zone: {vgname} on {obj.name}, entering weight paint mode")
