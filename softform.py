@@ -71,6 +71,90 @@ def save_zone_meta(obj, meta):
     obj[SF_META_KEY] = json.dumps(meta)
 
 
+def get_next_logical_zone_id(sf):
+    """Return a new logical zone id (shared by multiple objects)."""
+    max_idx = 0
+    for z in sf.zones:
+        zid = getattr(z, "zone_id", "")
+        if not zid.startswith("zone_"):
+            continue
+        try:
+            max_idx = max(max_idx, int(zid.split("_")[-1]))
+        except Exception:
+            pass
+    return f"zone_{max_idx + 1}"
+
+
+def load_zone_object_map(zone):
+    """Read {object_name: vertex_group_name} mapping from zone property."""
+    raw = getattr(zone, "object_vgroups_json", "")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def save_zone_object_map(zone, object_map):
+    """Persist {object_name: vertex_group_name} mapping on the zone."""
+    zone.object_vgroups_json = json.dumps(object_map)
+
+
+def iter_zone_object_groups(context, zone):
+    """Yield tuples (obj, vg_name) for all objects linked to this logical zone."""
+    object_map = load_zone_object_map(zone)
+
+    # Backward compatibility for old scenes that only had one vgroup_name.
+    if not object_map and zone.vgroup_name:
+        for obj in context.scene.objects:
+            if obj.type != 'MESH':
+                continue
+            if obj.vertex_groups.get(zone.vgroup_name):
+                yield obj, zone.vgroup_name
+        return
+
+    for obj_name, vg_name in object_map.items():
+        obj = context.scene.objects.get(obj_name)
+        if obj is None or obj.type != 'MESH':
+            continue
+        if obj.vertex_groups.get(vg_name) is None:
+            continue
+        yield obj, vg_name
+
+
+def create_zone_entry(sf, logical_zone_id, zone_name, color, object_map, fallback_vgroup=""):
+    """Create one logical zone entry in UI and store object->vertex-group mapping."""
+    zone = sf.zones.add()
+    zone.zone_id = logical_zone_id
+    zone.zone_name = zone_name
+    zone.vgroup_name = fallback_vgroup  # legacy compatibility only
+    zone.color = color
+    save_zone_object_map(zone, object_map)
+    sf.active_zone_index = len(sf.zones) - 1
+    return zone
+
+
+def gather_multi_object_face_selection(context):
+    """Collect selected vertex indices per object from multi-object edit mode."""
+    selected_by_object = {}
+    objs = getattr(context, "objects_in_mode_unique_data", [])
+    for obj in objs:
+        if obj.type != 'MESH' or obj.mode != 'EDIT':
+            continue
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+
+        # We convert selected faces to vertices so the vertex group stores the same region.
+        selected_verts = {v.index for f in bm.faces if f.select for v in f.verts}
+        if selected_verts:
+            selected_by_object[obj] = sorted(selected_verts)
+    return selected_by_object
+
+
 def get_protected_vert_indices(bm):
     """Return set of vertex indices that should not be displaced (open/seam edges)."""
     protected = set()
@@ -545,8 +629,12 @@ class SoftFormOperation(bpy.types.PropertyGroup):
 
 
 class SoftFormZone(bpy.types.PropertyGroup):
+    zone_id: bpy.props.StringProperty(name="Zone ID", default="")
     zone_name: bpy.props.StringProperty(name="Naam", default="Zone")
+    # Legacy fallback for older saved scenes; new code uses object_vgroups_json.
     vgroup_name: bpy.props.StringProperty(name="Vertex Group")
+    # JSON mapping: {object_name: vertex_group_name}
+    object_vgroups_json: bpy.props.StringProperty(name="Object Groups", default="{}")
     color: bpy.props.FloatVectorProperty(name="Kleur", subtype='COLOR', size=4,
         min=0.0, max=1.0, default=(0.9, 0.2, 0.2, 1.0))
     operations: bpy.props.CollectionProperty(type=SoftFormOperation)
@@ -624,27 +712,18 @@ def refresh_preview(context):
         return
 
     zone = sf.zones[sf.active_zone_index]
-    if not zone.vgroup_name:
-        return
+    # Build zone meta from PropertyGroup once and reuse for all mapped objects.
+    meta = zone_pg_to_dict(zone)
 
-    # Find objects that have this vertex group
-    for obj in context.scene.objects:
-        if obj.type != 'MESH':
-            continue
-        vg = obj.vertex_groups.get(zone.vgroup_name)
-        if vg is None:
-            continue
-
+    for obj, vg_name in iter_zone_object_groups(context, zone):
         # Store originals if not stored yet
         if SF_ORIG_KEY not in obj:
             store_original_positions(obj)
         else:
             restore_original_positions(obj)
 
-        # Build zone meta from PropertyGroup
-        meta = zone_pg_to_dict(zone)
         try:
-            apply_zone_operations(obj, zone.vgroup_name, meta, sf.protect_edges, sf.preserve_uv)
+            apply_zone_operations(obj, vg_name, meta, sf.protect_edges, sf.preserve_uv)
         except Exception as e:
             print(f"[SoftForm] preview error: {e}")
             traceback.print_exc()
@@ -746,60 +825,60 @@ class SF_OT_CreateZoneNoInpaint(bpy.types.Operator):
             if not selected:
                 self.report({'ERROR'}, "Geen mesh-objecten geselecteerd")
                 return {'CANCELLED'}
-            for obj in selected:
-                self._create_full_object_zone(context, sf, obj)
+            self._create_full_object_zone(context, sf, selected)
         else:
-            # Face select mode — use active object in edit mode
-            obj = context.active_object
-            if obj is None or obj.type != 'MESH':
-                self.report({'ERROR'}, "Geen actief mesh-object in edit mode")
+            # Face select mode with multi-object edit support.
+            selected_by_object = gather_multi_object_face_selection(context)
+            if not selected_by_object:
+                self.report({'WARNING'}, "Geen geselecteerde faces gevonden in Edit Mode")
                 return {'CANCELLED'}
-            if obj.mode != 'EDIT':
-                self.report({'ERROR'}, "Object moet in Edit Mode zijn")
-                return {'CANCELLED'}
-            self._create_face_select_zone(context, sf, obj)
+            self._create_face_select_zone(context, sf, selected_by_object)
 
         sf.wizard_step = 2
         return {'FINISHED'}
 
-    def _create_full_object_zone(self, context, sf, obj):
-        idx = get_next_zone_index(obj)
-        vgname = f"{SF_PREFIX}{idx}"
-        vg = obj.vertex_groups.new(name=vgname)
-        # Assign all vertices with weight 1.0
-        all_indices = [v.index for v in obj.data.vertices]
-        vg.add(all_indices, 1.0, 'REPLACE')
+    def _create_full_object_zone(self, context, sf, objects):
+        """Create one logical zone over full-mesh selections on multiple objects."""
+        logical_zone_id = get_next_logical_zone_id(sf)
+        object_map = {}
+        color_index = len(sf.zones) + 1
 
-        # Register zone in scene props
-        zone = sf.zones.add()
-        zone.zone_name = vgname
-        zone.vgroup_name = vgname
-        color = get_zone_color(idx)
-        zone.color = color
-        sf.active_zone_index = len(sf.zones) - 1
-        print(f"[SoftForm] Created full-object zone: {vgname} on {obj.name}")
+        for obj in objects:
+            idx = get_next_zone_index(obj)
+            vgname = f"{SF_PREFIX}{idx}"
+            vg = obj.vertex_groups.new(name=vgname)
+            # Assign all vertices with weight 1.0 for this object.
+            all_indices = [v.index for v in obj.data.vertices]
+            vg.add(all_indices, 1.0, 'REPLACE')
+            object_map[obj.name] = vgname
 
-    def _create_face_select_zone(self, context, sf, obj):
-        bm = bmesh.from_edit_mesh(obj.data)
-        bm.verts.ensure_lookup_table()
-        selected_verts = [v.index for v in bm.verts if v.select]
-        if not selected_verts:
-            self.report({'WARNING'}, "Geen faces/vertices geselecteerd")
-            return
+        zone_name = f"{SF_PREFIX}{logical_zone_id}"
+        fallback_vg = next(iter(object_map.values()), "")
+        color = get_zone_color(color_index)
+        create_zone_entry(sf, logical_zone_id, zone_name, color, object_map, fallback_vg)
+        print(f"[SoftForm] Created logical full-object zone: {zone_name} -> {object_map}")
 
-        # Return to object mode to assign vertex group
+    def _create_face_select_zone(self, context, sf, selected_by_object):
+        """Create one logical zone from selected faces across multiple edit-mode objects."""
+        # Leave edit mode once to safely create vertex groups on all involved objects.
         bpy.ops.object.mode_set(mode='OBJECT')
-        idx = get_next_zone_index(obj)
-        vgname = f"{SF_PREFIX}{idx}"
-        vg = obj.vertex_groups.new(name=vgname)
-        vg.add(selected_verts, 1.0, 'REPLACE')
 
-        zone = sf.zones.add()
-        zone.zone_name = vgname
-        zone.vgroup_name = vgname
-        zone.color = get_zone_color(idx)
-        sf.active_zone_index = len(sf.zones) - 1
-        print(f"[SoftForm] Created face-select zone: {vgname} on {obj.name}")
+        logical_zone_id = get_next_logical_zone_id(sf)
+        object_map = {}
+        color_index = len(sf.zones) + 1
+
+        for obj, selected_verts in selected_by_object.items():
+            idx = get_next_zone_index(obj)
+            vgname = f"{SF_PREFIX}{idx}"
+            vg = obj.vertex_groups.new(name=vgname)
+            vg.add(selected_verts, 1.0, 'REPLACE')
+            object_map[obj.name] = vgname
+
+        zone_name = f"{SF_PREFIX}{logical_zone_id}"
+        fallback_vg = next(iter(object_map.values()), "")
+        color = get_zone_color(color_index)
+        create_zone_entry(sf, logical_zone_id, zone_name, color, object_map, fallback_vg)
+        print(f"[SoftForm] Created logical face-select zone: {zone_name} -> {object_map}")
 
 
 class SF_OT_CreateZoneWithInpaint(bpy.types.Operator):
@@ -828,11 +907,16 @@ class SF_OT_CreateZoneWithInpaint(bpy.types.Operator):
         # Start with zero weights — user will paint
         vg.add([v.index for v in obj.data.vertices], 0.0, 'REPLACE')
 
-        zone = sf.zones.add()
-        zone.zone_name = vgname
-        zone.vgroup_name = vgname
-        zone.color = get_zone_color(idx)
-        sf.active_zone_index = len(sf.zones) - 1
+        logical_zone_id = get_next_logical_zone_id(sf)
+        object_map = {obj.name: vgname}
+        create_zone_entry(
+            sf,
+            logical_zone_id,
+            f"{SF_PREFIX}{logical_zone_id}",
+            get_zone_color(len(sf.zones) + 1),
+            object_map,
+            vgname,
+        )
 
         # Enter weight paint mode
         obj.vertex_groups.active = vg
@@ -893,13 +977,11 @@ class SF_OT_DeleteZone(bpy.types.Operator):
         if self.index >= len(sf.zones):
             return {'CANCELLED'}
         zone = sf.zones[self.index]
-        vgname = zone.vgroup_name
-        # Remove vertex group from all objects
-        for obj in context.scene.objects:
-            if obj.type == 'MESH':
-                vg = obj.vertex_groups.get(vgname)
-                if vg:
-                    obj.vertex_groups.remove(vg)
+        # Remove all vertex groups linked to this logical zone.
+        for obj, vgname in iter_zone_object_groups(context, zone):
+            vg = obj.vertex_groups.get(vgname)
+            if vg:
+                obj.vertex_groups.remove(vg)
         sf.zones.remove(self.index)
         sf.active_zone_index = max(0, sf.active_zone_index - 1)
         return {'FINISHED'}
@@ -1010,20 +1092,20 @@ class SF_OT_ApplyConfirm(bpy.types.Operator):
         meta = zone_pg_to_dict(zone)
 
         success = False
-        for obj in context.scene.objects:
-            if obj.type != 'MESH':
-                continue
-            if obj.vertex_groups.get(zone.vgroup_name) is None:
-                continue
+        for obj, vg_name in iter_zone_object_groups(context, zone):
             # Restore to clean state first
             restore_original_positions(obj)
             try:
-                result = apply_zone_operations(obj, zone.vgroup_name, meta, sf.protect_edges, sf.preserve_uv)
+                result = apply_zone_operations(obj, vg_name, meta, sf.protect_edges, sf.preserve_uv)
                 if result:
                     success = True
-                    # Save zone config as custom property
+                    # Save zone config with logical zone-id and per-object vg reference.
                     obj_meta = load_zone_meta(obj)
-                    obj_meta[zone.vgroup_name] = meta
+                    obj_meta[zone.zone_id or zone.zone_name] = {
+                        "zone_name": zone.zone_name,
+                        "vgroup_name": vg_name,
+                        "operations": meta.get("operations", []),
+                    }
                     save_zone_meta(obj, obj_meta)
                     # Clear stored originals (operations are now baked)
                     if SF_ORIG_KEY in obj:
